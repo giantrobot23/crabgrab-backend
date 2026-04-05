@@ -22,7 +22,7 @@ def get_ydl_opts(quiet=True):
         "no_warnings": True,
         "extract_flat": False,
         "noplaylist": True,
-        "cookiefile": "cookies.txt",
+        "cookiefile": "/opt/render/project/src/cookies.txt",
     }
 
 
