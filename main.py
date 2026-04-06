@@ -22,7 +22,10 @@ def get_ydl_opts(quiet=True):
         "extract_flat": False,
         "noplaylist": True,
         "cookiefile": "/opt/render/project/src/cookies.txt",
-        "extractor_args": {"youtube": {"player_client": ["android"]}},
+        # safer client (or remove entirely)
+        "extractor_args": {"youtube": {"player_client": ["web"]}},
+        # always fallback to something valid
+        "format": "best[ext=mp4]/best",
     }
 
 
@@ -47,22 +50,24 @@ def pick_formats(info: dict, want_audio_only: bool = False):
             if f.get("vcodec") == "none" and f.get("acodec") != "none"
         ]
         audio_fmts.sort(key=lambda f: f.get("abr") or 0, reverse=True)
+
         for f in audio_fmts[:3]:
             abr = int(f.get("abr") or 0)
             result.append({
                 "format_id": f["format_id"],
-                "label": f"{abr}kbps MP3" if abr else "MP3",
+                "label": f"{abr}kbps",
                 "ext": f.get("ext", "mp3"),
             })
         return result
 
-    # Only pick formats that have BOTH video and audio (no ffmpeg needed)
+    # ONLY formats that already contain audio + video (no ffmpeg needed)
     video_fmts = [
         f for f in formats
         if f.get("vcodec") != "none"
         and f.get("acodec") != "none"
         and f.get("height")
     ]
+
     video_fmts.sort(key=lambda f: f.get("height", 0), reverse=True)
 
     for f in video_fmts:
@@ -77,7 +82,7 @@ def pick_formats(info: dict, want_audio_only: bool = False):
         if len(result) >= 5:
             break
 
-    # Fallback if no combined formats found
+    # fallback if nothing found
     if not result:
         result.append({
             "format_id": "best",
@@ -126,15 +131,20 @@ async def download_video(
     try:
         opts = {
             **get_ydl_opts(),
-            "format": format_id,
+            # fallback if specific format fails
+            "format": f"{format_id}/best",
         }
 
         def get_direct_url():
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
+
+                # try exact format match
                 for f in info.get("formats", []):
-                    if f.get("format_id") == format_id:
-                        return f.get("url"), f.get("ext", "mp4"), info.get("title", "video")
+                    if f.get("format_id") == format_id and f.get("url"):
+                        return f["url"], f.get("ext", "mp4"), info.get("title", "video")
+
+                # fallback
                 return info.get("url"), info.get("ext", "mp4"), info.get("title", "video")
 
         loop = asyncio.get_event_loop()
@@ -163,6 +173,7 @@ async def download_video(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/debug")
 async def debug(url: str = Query(...)):
     try:
@@ -170,20 +181,31 @@ async def debug(url: str = Query(...)):
             "quiet": False,
             "no_warnings": False,
             "noplaylist": True,
-            "cookiefile": "/opt/render/project/src/cookies.txt",
         }
+
         def extract():
             with yt_dlp.YoutubeDL(opts) as ydl:
                 return ydl.extract_info(url, download=False)
+
         loop = asyncio.get_event_loop()
         info = await loop.run_in_executor(None, extract)
+
         formats = [
-            {"format_id": f.get("format_id"), "ext": f.get("ext"), "height": f.get("height"), "vcodec": f.get("vcodec"), "acodec": f.get("acodec")}
+            {
+                "format_id": f.get("format_id"),
+                "ext": f.get("ext"),
+                "height": f.get("height"),
+                "vcodec": f.get("vcodec"),
+                "acodec": f.get("acodec"),
+            }
             for f in info.get("formats", [])
         ]
+
         return {"title": info.get("title"), "formats": formats}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/health")
 async def health():
