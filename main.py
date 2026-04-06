@@ -23,6 +23,7 @@ def get_ydl_opts(quiet=True):
         "extract_flat": False,
         "noplaylist": True,
         "cookiefile": "/opt/render/project/src/cookies.txt",
+       
     }
 
 
@@ -127,9 +128,9 @@ async def download_video(
     """
     try:
         opts = {
-            **get_ydl_opts(),
-            "format": format_id,
-        }
+    **get_ydl_opts(),
+    "format": "bestvideo+bestaudio/best",
+}
 
         def get_direct_url():
             with yt_dlp.YoutubeDL(opts) as ydl:
