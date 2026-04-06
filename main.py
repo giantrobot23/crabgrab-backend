@@ -163,6 +163,27 @@ async def download_video(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/debug")
+async def debug(url: str = Query(...)):
+    try:
+        opts = {
+            "quiet": False,
+            "no_warnings": False,
+            "noplaylist": True,
+            "cookiefile": "/opt/render/project/src/cookies.txt",
+        }
+        def extract():
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=False)
+        loop = asyncio.get_event_loop()
+        info = await loop.run_in_executor(None, extract)
+        formats = [
+            {"format_id": f.get("format_id"), "ext": f.get("ext"), "height": f.get("height"), "vcodec": f.get("vcodec"), "acodec": f.get("acodec")}
+            for f in info.get("formats", [])
+        ]
+        return {"title": info.get("title"), "formats": formats}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")
 async def health():
