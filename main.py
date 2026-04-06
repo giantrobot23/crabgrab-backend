@@ -22,10 +22,8 @@ def get_ydl_opts(quiet=True):
         "extract_flat": False,
         "noplaylist": True,
         "cookiefile": "/opt/render/project/src/cookies.txt",
-        # safer client (or remove entirely)
+        # safer client (or remove completely if needed)
         "extractor_args": {"youtube": {"player_client": ["web"]}},
-        # always fallback to something valid
-        "format": "best[ext=mp4]/best",
     }
 
 
@@ -60,7 +58,7 @@ def pick_formats(info: dict, want_audio_only: bool = False):
             })
         return result
 
-    # ONLY formats that already contain audio + video (no ffmpeg needed)
+    # ONLY combined formats (audio + video)
     video_fmts = [
         f for f in formats
         if f.get("vcodec") != "none"
@@ -82,7 +80,7 @@ def pick_formats(info: dict, want_audio_only: bool = False):
         if len(result) >= 5:
             break
 
-    # fallback if nothing found
+    # fallback
     if not result:
         result.append({
             "format_id": "best",
@@ -129,23 +127,39 @@ async def download_video(
     format_id: str = Query("best"),
 ):
     try:
-        opts = {
-            **get_ydl_opts(),
-            # fallback if specific format fails
-            "format": f"{format_id}/best",
-        }
+        opts = get_ydl_opts()  # 🚨 NO format here
 
         def get_direct_url():
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
+                formats = info.get("formats", [])
 
-                # try exact format match
-                for f in info.get("formats", []):
+                # 1️⃣ exact match
+                for f in formats:
                     if f.get("format_id") == format_id and f.get("url"):
                         return f["url"], f.get("ext", "mp4"), info.get("title", "video")
 
-                # fallback
-                return info.get("url"), info.get("ext", "mp4"), info.get("title", "video")
+                # 2️⃣ best combined (audio+video)
+                combined = [
+                    f for f in formats
+                    if f.get("vcodec") != "none"
+                    and f.get("acodec") != "none"
+                ]
+
+                if combined:
+                    best = sorted(
+                        combined,
+                        key=lambda f: f.get("height", 0),
+                        reverse=True
+                    )[0]
+                    return best["url"], best.get("ext", "mp4"), info.get("title", "video")
+
+                # 3️⃣ fallback anything
+                for f in formats:
+                    if f.get("url"):
+                        return f["url"], f.get("ext", "mp4"), info.get("title", "video")
+
+                return None, None, None
 
         loop = asyncio.get_event_loop()
         direct_url, ext, title = await loop.run_in_executor(None, get_direct_url)
@@ -168,8 +182,6 @@ async def download_video(
             headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
 
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
