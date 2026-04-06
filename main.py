@@ -7,10 +7,9 @@ import asyncio
 
 app = FastAPI(title="CrabGrab API")
 
-# Allow your frontend domain here
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Replace with ["https://crabgrab.fun"] in production
+    allow_origins=["*"],
     allow_methods=["GET"],
     allow_headers=["*"],
 )
@@ -23,7 +22,7 @@ def get_ydl_opts(quiet=True):
         "extract_flat": False,
         "noplaylist": True,
         "cookiefile": "/opt/render/project/src/cookies.txt",
-       
+        "format": "best",  # single file, no ffmpeg merge needed
     }
 
 
@@ -38,22 +37,18 @@ def format_duration(seconds):
 
 
 def pick_formats(info: dict, want_audio_only: bool = False):
-    """
-    Returns a clean list of format options to show the user.
-    """
     formats = info.get("formats", [])
     seen_heights = set()
     result = []
 
     if want_audio_only:
-        # Best audio formats
         audio_fmts = [
             f for f in formats
             if f.get("vcodec") == "none" and f.get("acodec") != "none"
         ]
-        audio_fmts.sort(key=lambda f: f.get("abr", 0), reverse=True)
+        audio_fmts.sort(key=lambda f: f.get("abr") or 0, reverse=True)
         for f in audio_fmts[:3]:
-            abr = int(f.get("abr", 0))
+            abr = int(f.get("abr") or 0)
             result.append({
                 "format_id": f["format_id"],
                 "label": f"{abr}kbps MP3" if abr else "MP3",
@@ -61,10 +56,12 @@ def pick_formats(info: dict, want_audio_only: bool = False):
             })
         return result
 
-    # Video formats — deduplicate by height
+    # Only pick formats that have BOTH video and audio (no ffmpeg needed)
     video_fmts = [
         f for f in formats
-        if f.get("vcodec") != "none" and f.get("height")
+        if f.get("vcodec") != "none"
+        and f.get("acodec") != "none"
+        and f.get("height")
     ]
     video_fmts.sort(key=lambda f: f.get("height", 0), reverse=True)
 
@@ -80,15 +77,19 @@ def pick_formats(info: dict, want_audio_only: bool = False):
         if len(result) >= 5:
             break
 
+    # Fallback if no combined formats found
+    if not result:
+        result.append({
+            "format_id": "best",
+            "label": "Best quality",
+            "ext": "mp4",
+        })
+
     return result
 
 
 @app.get("/info")
-async def get_info(url: str = Query(..., description="Video URL to fetch info for")):
-    """
-    Returns video metadata + available format options.
-    Frontend calls this when user hits 'Grab it'.
-    """
+async def get_info(url: str = Query(...)):
     try:
         opts = get_ydl_opts()
 
@@ -96,7 +97,6 @@ async def get_info(url: str = Query(..., description="Video URL to fetch info fo
             with yt_dlp.YoutubeDL(opts) as ydl:
                 return ydl.extract_info(url, download=False)
 
-        # Run blocking yt-dlp in thread pool
         loop = asyncio.get_event_loop()
         info = await loop.run_in_executor(None, extract)
 
@@ -123,23 +123,18 @@ async def download_video(
     url: str = Query(...),
     format_id: str = Query("best"),
 ):
-    """
-    Streams the video/audio file directly to the browser for download.
-    """
     try:
         opts = {
-    **get_ydl_opts(),
-    "format": "bestvideo+bestaudio/best",
-}
+            **get_ydl_opts(),
+            "format": format_id,
+        }
 
         def get_direct_url():
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
-                # Find the matching format's direct URL
                 for f in info.get("formats", []):
                     if f.get("format_id") == format_id:
                         return f.get("url"), f.get("ext", "mp4"), info.get("title", "video")
-                # Fallback to best
                 return info.get("url"), info.get("ext", "mp4"), info.get("title", "video")
 
         loop = asyncio.get_event_loop()
@@ -148,7 +143,6 @@ async def download_video(
         if not direct_url:
             raise HTTPException(status_code=404, detail="Could not get download URL")
 
-        # Stream the file from the platform's CDN through to the user
         async def stream():
             async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
                 async with client.stream("GET", direct_url) as response:
