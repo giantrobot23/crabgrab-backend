@@ -22,7 +22,7 @@ def get_ydl_opts(quiet=True):
         "extract_flat": False,
         "noplaylist": True,
         "cookiefile": "/opt/render/project/src/cookies.txt",
-        "format": "best",  # single file, no ffmpeg merge needed
+        "extractor_args": {"youtube": {"player_client": ["android"]}},
     }
 
 
