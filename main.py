@@ -22,8 +22,8 @@ def get_ydl_opts(quiet=True):
         "extract_flat": False,
         "noplaylist": True,
         "cookiefile": "/opt/render/project/src/cookies.txt",
-        # safer client (or remove completely if needed)
         "extractor_args": {"youtube": {"player_client": ["web"]}},
+        "format": "18/best",  # format 18 = 360p combined, fallback to best
     }
 
 
